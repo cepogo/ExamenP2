@@ -10,8 +10,10 @@ import ec.edu.espe.turno.modelo.TurnoCaja;
 import ec.edu.espe.turno.repositorio.TurnoCajaRepositorio;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -23,6 +25,10 @@ public class TurnoCajaService {
     
     private final TurnoCajaRepositorio turnoCajaRepositorio;
     private final TurnoCajaMapper turnoCajaMapper;
+    
+    // Inyectar el repositorio de transacciones
+    @Autowired
+    private ec.edu.espe.transaccion.repositorio.TransaccionTurnoRepositorio transaccionTurnoRepositorio;
     
     private String generarCodigoTurno(String codigoCaja, String codigoCajero) {
         String fecha = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
@@ -68,7 +74,25 @@ public class TurnoCajaService {
         if (!"ABIERTO".equals(turno.getEstado())) {
             throw new TurnoNoEncontradoException("El turno no está abierto: " + dto.getCodigoTurno(), 2, "TurnoCaja");
         }
-        
+
+        // === VALIDACIÓN DE MONTO FINAL ===
+        // 1. Obtener todas las transacciones del turno
+        List<ec.edu.espe.transaccion.modelo.TransaccionTurno> transacciones = transaccionTurnoRepositorio.findByCodigoTurno(dto.getCodigoTurno());
+        // 2. Calcular el monto esperado
+        BigDecimal montoEsperado = turno.getMontoInicial();
+        for (ec.edu.espe.transaccion.modelo.TransaccionTurno txn : transacciones) {
+            if ("DEPOSITO".equalsIgnoreCase(txn.getTipoTransaccion()) || "AHORRO".equalsIgnoreCase(txn.getTipoTransaccion())) {
+                montoEsperado = montoEsperado.add(txn.getMontoTotal());
+            } else if ("RETIRO".equalsIgnoreCase(txn.getTipoTransaccion())) {
+                montoEsperado = montoEsperado.subtract(txn.getMontoTotal());
+            }
+        }
+        // 3. Comparar con el monto final ingresado
+        if (montoEsperado.compareTo(dto.getMontoFinal()) != 0) {
+            throw new IllegalArgumentException("El monto final ingresado (" + dto.getMontoFinal() + ") no coincide con el monto esperado (" + montoEsperado + ") según las transacciones del turno.");
+        }
+        // === FIN VALIDACIÓN ===
+
         turno.setFinTurno(LocalDateTime.now());
         turno.setMontoFinal(dto.getMontoFinal());
         turno.setEstado("CERRADO");
